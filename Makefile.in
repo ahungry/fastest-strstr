@@ -1,0 +1,48 @@
+LISP?= sbcl
+AF_LIB_TESTY_COLORIZE?= yes
+
+TFLAGS = --non-interactive \
+	--eval '(ql:quickload :fastest-strstr)' \
+	--eval '(fastest-strstr.run.tests:main)'
+
+CFLAGS = --disable-debugger \
+	--eval "(mapc \#'require '(sb-bsd-sockets sb-posix sb-introspect sb-cltl2 sb-rotate-byte sb-cover asdf))" \
+	--eval '(sb-ext:save-lisp-and-die "bin/fastest-strstr.core")'
+
+TEFLAGS = --disable-debugger \
+	--eval '(ql:quickload :fastest-strstr)' \
+	--eval '(sb-ext:save-lisp-and-die "bin/fastest-strstr-test" :executable t)'
+
+EFLAGS = --disable-debugger \
+	--eval '(ql:quickload :fastest-strstr)' \
+	--eval '(sb-ext:save-lisp-and-die "bin/fastest-strstr" :executable t :toplevel '"\#'fastest-strstr::main)"
+
+CORE = bin/fastest-strstr.core
+EXE = bin/fastest-strstr
+TEXE = bin/fastest-strstr-test
+
+all: $(EXE)
+
+$(CORE):
+	$(LISP) $(CFLAGS)
+
+$(EXE): $(CORE)
+	$(LISP) --core $< $(EFLAGS)
+
+$(TEXE): $(CORE)
+	$(LISP) --core $< $(TEFLAGS)
+
+test: $(TEXE)
+	AF_LIB_TESTY_COLORIZE=$(AF_LIB_TESTY_COLORIZE) $< $(TFLAGS)
+
+coverage: $(TEXE)
+	AF_LIB_TESTY_COVERAGE='y' \
+	AF_LIB_TESTY_COLORIZE=$(AF_LIB_TESTY_COLORIZE) $< $(TFLAGS)
+
+clean:
+	-rm $(CORE)
+	-rm $(EXE)
+	-rm $(TEXE)
+
+.PHONY:
+	all test
