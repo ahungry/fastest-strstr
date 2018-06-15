@@ -28,7 +28,9 @@
   :description "Your project template"
   :author "Your Name <fastest-strstr@example.com>"
   :license "GPLv3"
-  :depends-on (#:ahungry-fleece)
+  :depends-on (#:ahungry-fleece
+               :bordeaux-threads
+               :trivial-mmap)
   :serial t
   :components
   (

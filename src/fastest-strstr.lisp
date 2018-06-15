@@ -19,7 +19,7 @@
 (in-package #:cl-user)
 
 (defpackage fastest-strstr
-  (:use :cl)
+  (:use :cl :trivial-mmap :bordeaux-threads)
   (:export :main
            :print-usage))
 
@@ -35,6 +35,106 @@ Usage:
 
 "
    (asdf:component-version (asdf:find-system :fastest-strstr))))
+
+;; Sample of doing it on two strings a byte at a time
+(defun strstr-byte-at-a-time (needle haystack)
+  (let ((hit 0)
+        (end (length haystack)))
+    (loop
+       :for c
+       :from 0
+       :to end
+       :when (equal (length needle) hit)
+       :do (return-from strstr-byte-at-a-time (- c (length needle)))
+       :do
+         (let ((hay (subseq haystack c (1+ c))))
+           (print hay)
+           (if (equal hay (subseq needle hit (1+ hit)))
+               (progn (print c) (incf hit))
+               (progn (setf hit 0)))
+           ))))
+
+(defun strstr-byte-at-a-time-file (needle file-name)
+  (declare (ignore needle))
+  (let ((c 0))
+    (with-open-file
+        (stream file-name
+                :direction :input
+                :if-does-not-exist :error
+                ;; :element-type '(unsigned-byte 8)
+                :external-format :utf-8)
+      (when stream
+        ;; (file-position stream 11562484)
+        (loop for byte = (read-line stream nil 'eof)
+           until (eq byte 'eof)
+           do (incf c))))
+    c))
+
+(defvar *res* '())
+
+(defun scan-range (ptr needle size start)
+  (let ((reads 0))
+    (loop :for offset :from start :below (+ start size) :by (length needle)
+       :do (progn (incf reads) (mmap-read-char ptr offset)))
+    (push reads *res*)))
+
+(defun find-thread (name)
+  (find name (bt:all-threads) :key #'bt:thread-name :test #'string=))
+
+;; ripgrep 0.514 on 2.4GB
+;; GNU grep 1.061 on 2.4GB
+(defun strstr-with-mmap (needle file-name)
+  (setf *res* '())
+  (let* ((ptr (mmap-file file-name))
+         ;; 1: 3.5
+         ;; 10: 4.465
+         ;; 100: 4.487
+         ;; 1000: 0.296
+         (threads 100)
+         (size (trivial-mmap::mmapped-file-size ptr))
+         (chunk (round (/ size threads))))
+
+    (print size)
+    (print chunk)
+
+    (print (length needle))
+    ;; (mmap-read-char ptr 0)
+
+    ;; Dispatch parts of file to our little workers.
+    (loop :for offset :below size :by chunk
+       :do (make-thread (lambda () (scan-range ptr needle chunk offset))
+                        :name "strstr-thread")
+         )
+
+    (print "i'm waaaaaiting...")
+
+    ;; pause for those threads
+    (loop :for threads := (find-thread "strstr-thread")
+       ;; :do (sleep 0.05)
+       :until (equal threads nil))
+
+    (munmap-file ptr)
+    ))
+
+;; 0.157 seconds
+(defun test-swm ()
+  (setf (sb-ext:bytes-consed-between-gcs) (* 3000 1024 1024))
+  (sb-ext:gc)
+  (time (strstr-with-mmap
+         "22:41:32.70"
+         "/tmp/bigfile")))
+
+;; (defun strstr-with-mmap (needle file-name)
+;;   (trivial-mmap:with-mmap-file (ptr "/home/mcarter/unison.log")
+;;     (loop :for offset :below 11562484 :do
+;;          (assert (characterp (trivial-mmap:mmap-read-char ptr offset))))))
+
+(defun test-sbaatf ()
+  (setf (sb-ext:bytes-consed-between-gcs) (* 3000 1024 1024))
+  (sb-ext:gc)
+  (time (strstr-byte-at-a-time-file
+         "22:41:32.70"
+         "/home/mcarter/unison.log")))
 
 (defun main (&rest argv)
   (unless argv
